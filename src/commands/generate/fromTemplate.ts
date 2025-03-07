@@ -12,10 +12,11 @@ import { isLocalTemplate, Watcher } from '../../core/utils/generator';
 import { ValidationError } from '../../core/errors/validation-error';
 import { GeneratorError } from '../../core/errors/generator-error';
 import { Parser } from '@asyncapi/parser';
-import { intro, isCancel, spinner, text } from '@clack/prompts';
+import { intro, isCancel, text, spinner } from '@clack/prompts';
 import { inverse, yellow, magenta, green, red } from 'picocolors';
 import { fromTemplateFlags } from '../../core/flags/generate/fromTemplate.flags';
 import { proxyFlags } from '../../core/flags/proxy.flags';
+import { ProgressIndicator } from '../../core/utils/progress';
 
 interface IMapBaseUrlToFlag {
   url: string,
@@ -72,10 +73,14 @@ export default class Template extends Command {
   async run() {
     const { args, flags } = await this.parse(Template); // NOSONAR
     const interactive = !flags['no-interactive'];
+    const verbose = flags.verbose;
+    const progress = new ProgressIndicator(verbose);
+    
     let asyncapi = args['asyncapi'] ?? '';
     let template = args['template'] ?? '';
     let output = flags.output as string;
     const {proxyPort,proxyHost} = flags;
+    
     if (interactive) {
       intro(inverse('AsyncAPI Generator'));
 
@@ -105,7 +110,10 @@ export default class Template extends Command {
       const proxyUrl = `http://${proxyHost}:${proxyPort}`;
       asyncapi = `${asyncapi}+${proxyUrl}`;
     }
+
+    progress.startSpinner('Loading AsyncAPI document...');
     const asyncapiInput = (await load(asyncapi)) || (await load());
+    progress.succeedSpinner('AsyncAPI document loaded successfully');
 
     this.specFile = asyncapiInput;
     this.metricsMetadata.template = template;
@@ -117,18 +125,22 @@ export default class Template extends Command {
     }
 
     if (asyncapiInput.isAsyncAPI3()) {
+      progress.startSpinner('Checking template compatibility with AsyncAPI v3...');
       const v3IssueLink = verifyTemplateSupportForV3(template);
       if (v3IssueLink !== undefined) {
+        progress.failSpinner('Template does not support AsyncAPI v3');
         this.error(`${template} template does not support AsyncAPI v3 documents, please checkout ${v3IssueLink}`);
       }
+      progress.succeedSpinner('Template supports AsyncAPI v3');
     }
+    
     if (flags['use-new-generator']) {
-      await this.generateUsingNewGenerator(asyncapi, template, output, options, genOption);
+      await this.generateUsingNewGenerator(asyncapi, template, output, options, genOption, progress);
     } else {
-      await this.generate(asyncapi, template, output, options, genOption, interactive);
+      await this.generate(asyncapi, template, output, options, genOption, interactive, progress);
     }
     if (watchTemplate) {
-      const watcherHandler = this.watcherHandler(asyncapi, template, output, options, genOption, interactive);
+      const watcherHandler = this.watcherHandler(asyncapi, template, output, options, genOption, interactive, progress);
       await this.runWatchMode(asyncapi, template, output, watcherHandler);
     }
   }
@@ -204,6 +216,7 @@ export default class Template extends Command {
       throw new Error('Invalid --registry-url flag. The param requires a valid http/https url.');
     }
   }
+  
   private async registryValidation(registryUrl?: string, registryAuth?: string, registryToken?: string) {
     if (!registryUrl) { return; }
     try {
@@ -215,6 +228,7 @@ export default class Template extends Command {
       this.error(`Can't fetch registryURL: ${registryUrl}`, { exit: 1 });
     }
   }
+  
   private paramParser(inputs?: string[]) {
     if (!inputs) { return {}; }
     const params: Record<string, any> = {};
@@ -262,7 +276,7 @@ export default class Template extends Command {
     return mapBaseURLToFolder;
   }
 
-  private async generate(asyncapi: string | undefined, template: string, output: string, options: any, genOption: any, interactive = true) {
+  private async generate(asyncapi: string | undefined, template: string, output: string, options: any, genOption: any, interactive = true, progress: ProgressIndicator) {
     let specification: Specification;
     try {
       specification = await load(asyncapi);
@@ -275,23 +289,36 @@ export default class Template extends Command {
         { exit: 1 },
       );
     }
+    
     const generator = new AsyncAPIGenerator(template, output || path.resolve(os.tmpdir(), 'asyncapi-generator'), options);
     const s = interactive ? spinner() : { start: () => null, stop: (string: string) => console.log(string) };
-    s.start('Generation in progress. Keep calm and wait a bit');
+    
+    progress.startProgressBar(3, 'Generation in progress');
     try {
+      progress.updateProgressBar(1, 'Parsing document...');
+      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
+      
+      progress.updateProgressBar(2, 'Generating files...');
       await generator.generateFromString(specification.text(), { ...genOption, path: asyncapi });
+      
+      progress.updateProgressBar(3, 'Finalizing output...');
+      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
+      
+      progress.stopProgressBar(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}`);
     } catch (err: any) {
-      s.stop('Generation failed');
+      progress.failSpinner('Generation failed');
       throw new GeneratorError(err);
     }
-    s.stop(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}\n`);
   }
 
-  private async generateUsingNewGenerator(asyncapi: string | undefined, template: string, output: string, options: any, genOption: any) {
+  private async generateUsingNewGenerator(asyncapi: string | undefined, template: string, output: string, options: any, genOption: any, progress: ProgressIndicator) {
     let specification: Specification;
     try {
+      progress.startSpinner('Loading specification...');
       specification = await load(asyncapi);
+      progress.succeedSpinner('Specification loaded successfully');
     } catch (err: any) {
+      progress.failSpinner('Failed to load specification');
       return this.error(
         new ValidationError({
           type: 'invalid-file',
@@ -300,15 +327,28 @@ export default class Template extends Command {
         { exit: 1 },
       );
     }
+    
+    progress.startSpinner('Initializing new generator...');
     const generator = new AsyncAPINewGenerator(template, output || path.resolve(os.tmpdir(), 'asyncapi-generator'), options);
-    this.log('Generation in progress. Keep calm and wait a bit');
+    progress.succeedSpinner('Generator initialized');
+    
+    progress.startProgressBar(3, 'Generation in progress');
+    
     try {
+      progress.updateProgressBar(1, 'Parsing document...');
+      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
+      
+      progress.updateProgressBar(2, 'Generating files...');
       await generator.generateFromString(specification.text(), { ...genOption, path: asyncapi });
+      
+      progress.updateProgressBar(3, 'Finalizing output...');
+      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
+      
+      progress.stopProgressBar(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}`);
     } catch (err: any) {
-      this.log('Generation failed');
+      progress.failSpinner('Generation failed');
       throw new GeneratorError(err);
     }
-    this.log(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}\n`);
   }
 
   private async runWatchMode(asyncapi: string | undefined, template: string, output: string, watchHandler: ReturnType<typeof this.watcherHandler>) {
@@ -351,7 +391,7 @@ export default class Template extends Command {
     });
   }
 
-  private watcherHandler(asyncapi: string, template: string, output: string, options: Record<string, any>, genOption: any, interactive: boolean): (changedFiles: Record<string, any>) => Promise<void> {
+  private watcherHandler(asyncapi: string, template: string, output: string, options: Record<string, any>, genOption: any, interactive: boolean, progress: ProgressIndicator): (changedFiles: Record<string, any>) => Promise<void> {
     return async (changedFiles: Record<string, any>): Promise<void> => {
       console.clear();
       console.log('[WATCHER] Change detected');
@@ -373,7 +413,7 @@ export default class Template extends Command {
         this.log(`\t${magenta(value.path)} was ${eventText}`);
       }
       try {
-        await this.generate(asyncapi, template, output, options, genOption, interactive);
+        await this.generate(asyncapi, template, output, options, genOption, interactive, progress);
       } catch (err: any) {
         throw new GeneratorError(err);
       }

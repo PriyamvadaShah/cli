@@ -1,11 +1,12 @@
 import Command from '../../core/base';
 import { load } from '../../core/models/SpecificationFile';
 import { formatOutput, parse, ValidateOptions } from '../../core/parser';
-import { cancel, intro, isCancel, select, spinner, text } from '@clack/prompts';
-import { green, inverse } from 'picocolors';
+import { cancel, intro, isCancel, select, text } from '@clack/prompts';
+import { inverse } from 'picocolors';
 import { generateModels, Languages, ModelinaArgs } from '@asyncapi/modelina-cli';
 import { modelsFlags } from '../../core/flags/generate/models.flags';
 import { proxyFlags } from '../../core/flags/proxy.flags';
+import { ProgressIndicator } from '../../core/utils/progress';
 
 export default class Models extends Command {
   static description = 'Generates typed models';
@@ -21,9 +22,10 @@ export default class Models extends Command {
     const { args, flags } = await this.parse(Models);
     let { language, file} = args;
     let { output } = flags;
-    const {proxyPort,proxyHost} = flags;
+    const {proxyPort, proxyHost, verbose} = flags;
 
     const interactive = !flags['no-interactive'];
+    const progress = new ProgressIndicator(verbose);
 
     if (!interactive) {
       intro(inverse('AsyncAPI Generate Models'));
@@ -38,15 +40,21 @@ export default class Models extends Command {
       const proxyUrl = `http://${proxyHost}:${proxyPort}`;
       file = `${file}+${proxyUrl}`;
     }
+    
+    progress.startSpinner('Loading AsyncAPI document...');
     const inputFile = (await load(file)) || (await load());
+    progress.succeedSpinner('AsyncAPI document loaded successfully');
 
-    const { document, diagnostics ,status } = await parse(this, inputFile, flags as ValidateOptions);
-
+    progress.startSpinner('Parsing document...');
+    const { document, diagnostics, status } = await parse(this, inputFile, flags as ValidateOptions);
+    
     if (!document || status === 'invalid') {
+      progress.failSpinner('Failed to parse AsyncAPI document');
       const severityErrors = diagnostics.filter((obj) => obj.severity === 0);
       this.log(`Input is not a correct AsyncAPI document so it cannot be processed.${formatOutput(severityErrors,'stylish','error')}`);
       return;
     }
+    progress.succeedSpinner('AsyncAPI document parsed successfully');
 
     const logger = {
       info: (message: string) => {
@@ -63,13 +71,12 @@ export default class Models extends Command {
       },
     };
 
-    const s = spinner();
-    s.start('Generating models...');
+    progress.startSpinner('Generating models...');
     try {
       const generatedModels = await generateModels({...flags, output}, document, logger, language as Languages);
       if (output && output !== 'stdout') {
         const generatedModelStrings = generatedModels.map((model) => { return model.modelName; });
-        s.stop(green(`Successfully generated the following models: ${generatedModelStrings.join(', ')}`));
+        progress.succeedSpinner(`Successfully generated the following models: ${generatedModelStrings.join(', ')}`);
         return;
       }
       const generatedModelStrings = generatedModels.map((model) => {
@@ -78,9 +85,9 @@ export default class Models extends Command {
   ${model.result}
         `;
       });
-      s.stop(green(`Successfully generated the following models: ${generatedModelStrings.join('\n')}`));
+      progress.succeedSpinner(`Successfully generated the following models: ${generatedModelStrings.join('\n')}`);
     } catch (error) {
-      s.stop(green('Failed to generate models')); 
+      progress.failSpinner('Failed to generate models'); 
 
       if (error instanceof Error) {
         this.error(error.message);
