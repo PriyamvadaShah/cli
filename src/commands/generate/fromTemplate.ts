@@ -292,7 +292,8 @@ export default class Template extends Command {
     
     const generator = new AsyncAPIGenerator(template, output || path.resolve(os.tmpdir(), 'asyncapi-generator'), options);
     const s = interactive ? spinner() : { start: () => null, stop: (string: string) => console.log(string) };
-    
+    s.start('Generation in progress. Keep calm and wait a bit');
+
     progress.startProgressBar(3, 'Generation in progress');
     try {
       progress.updateProgressBar(1, 'Parsing document...');
@@ -304,11 +305,12 @@ export default class Template extends Command {
       progress.updateProgressBar(3, 'Finalizing output...');
       await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
       
-      progress.stopProgressBar(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}`);
+      progress.stopProgressBar(`${yellow('Completed!') + magenta(output) + yellow('.')}`);
     } catch (err: any) {
-      progress.failSpinner('Generation failed');
+      s.stop('Generation failed');
       throw new GeneratorError(err);
     }
+    s.stop(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}\n`);
   }
 
   private async generateUsingNewGenerator(asyncapi: string | undefined, template: string, output: string, options: any, genOption: any, progress: ProgressIndicator) {
