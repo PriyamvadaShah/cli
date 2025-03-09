@@ -29,6 +29,7 @@ interface ParsedFlags {
   mapBaseUrlToFolder: IMapBaseUrlToFlag
 }
 
+// Templates not supporting v3 - kept same as original
 const templatesNotSupportingV3: Record<string, string> = {
   '@asyncapi/minimaltemplate': 'some link', // For testing purpose
   '@asyncapi/dotnet-nats-template': 'https://github.com/asyncapi/dotnet-nats-template/issues/384',
@@ -50,6 +51,48 @@ function verifyTemplateSupportForV3(template: string) {
   }
   return undefined;
 }
+
+// Progress hooks to monitor actual progress
+const setupProgressHooks = (generator: any, progress: ProgressIndicator) => {
+  const totalSteps = 4; // Parse, Template Init, Generate, Write
+  let currentStep = 0;
+  
+  // Register generator hooks to update progress
+  generator.hooks.on('start', () => {
+    progress.startProgressBar(totalSteps, 'Generation in progress');
+    currentStep = 1;
+    progress.updateProgressBar(currentStep, 'Starting generation process...');
+  });
+  
+  generator.hooks.on('before:parse', () => {
+    currentStep = 1;
+    progress.updateProgressBar(currentStep, 'Parsing AsyncAPI document...');
+  });
+  
+  generator.hooks.on('after:parse', () => {
+    currentStep = 2;
+    progress.updateProgressBar(currentStep, 'Initializing template...');
+  });
+  
+  generator.hooks.on('before:generate:template', () => {
+    currentStep = 3;
+    progress.updateProgressBar(currentStep, 'Generating files from template...');
+  });
+  
+  generator.hooks.on('after:generate:template', () => {
+    currentStep = 4;
+    progress.updateProgressBar(currentStep, 'Writing files to output directory...');
+  });
+  
+  generator.hooks.on('end', () => {
+    progress.stopProgressBar('Generation completed successfully!');
+  });
+  
+  // Error handling
+  generator.hooks.on('error', (error: any) => {
+    progress.failSpinner(`Error during generation: ${error.message}`);
+  });
+};
 
 export default class Template extends Command {
   static description = 'Generates whatever you want using templates compatible with AsyncAPI Generator.';
@@ -291,26 +334,20 @@ export default class Template extends Command {
     }
     
     const generator = new AsyncAPIGenerator(template, output || path.resolve(os.tmpdir(), 'asyncapi-generator'), options);
+    
+    // Register progress hooks
+    setupProgressHooks(generator, progress);
+    
     const s = interactive ? spinner() : { start: () => null, stop: (string: string) => console.log(string) };
     s.start('Generation in progress. Keep calm and wait a bit');
-
-    progress.startProgressBar(3, 'Generation in progress');
+    
     try {
-      progress.updateProgressBar(1, 'Parsing document...');
-      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
-      
-      progress.updateProgressBar(2, 'Generating files...');
       await generator.generateFromString(specification.text(), { ...genOption, path: asyncapi });
-      
-      progress.updateProgressBar(3, 'Finalizing output...');
-      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
-      
-      progress.stopProgressBar(`${yellow('Completed!') + magenta(output) + yellow('.')}`);
+      s.stop(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}\n`);
     } catch (err: any) {
       s.stop('Generation failed');
       throw new GeneratorError(err);
     }
-    s.stop(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}\n`);
   }
 
   private async generateUsingNewGenerator(asyncapi: string | undefined, template: string, output: string, options: any, genOption: any, progress: ProgressIndicator) {
@@ -334,19 +371,11 @@ export default class Template extends Command {
     const generator = new AsyncAPINewGenerator(template, output || path.resolve(os.tmpdir(), 'asyncapi-generator'), options);
     progress.succeedSpinner('Generator initialized');
     
-    progress.startProgressBar(3, 'Generation in progress');
+    setupProgressHooks(generator, progress);
     
     try {
-      progress.updateProgressBar(1, 'Parsing document...');
-      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
-      
-      progress.updateProgressBar(2, 'Generating files...');
       await generator.generateFromString(specification.text(), { ...genOption, path: asyncapi });
-      
-      progress.updateProgressBar(3, 'Finalizing output...');
-      await new Promise(resolve => setTimeout(resolve, 500)); // Simulate processing time
-      
-      progress.stopProgressBar(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}`);
+      progress.succeedSpinner(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}`);
     } catch (err: any) {
       progress.failSpinner('Generation failed');
       throw new GeneratorError(err);
