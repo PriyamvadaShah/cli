@@ -12,11 +12,10 @@ import { isLocalTemplate, Watcher } from '../../core/utils/generator';
 import { ValidationError } from '../../core/errors/validation-error';
 import { GeneratorError } from '../../core/errors/generator-error';
 import { Parser } from '@asyncapi/parser';
-import { intro, isCancel, text, spinner } from '@clack/prompts';
+import { intro, isCancel, spinner, text } from '@clack/prompts';
 import { inverse, yellow, magenta, green, red } from 'picocolors';
 import { fromTemplateFlags } from '../../core/flags/generate/fromTemplate.flags';
 import { proxyFlags } from '../../core/flags/proxy.flags';
-import { SingleBar, Presets } from 'cli-progress';
 
 interface IMapBaseUrlToFlag {
   url: string,
@@ -29,7 +28,6 @@ interface ParsedFlags {
   mapBaseUrlToFolder: IMapBaseUrlToFlag
 }
 
-// Templates not supporting v3 - kept same as original
 const templatesNotSupportingV3: Record<string, string> = {
   '@asyncapi/minimaltemplate': 'some link', // For testing purpose
   '@asyncapi/dotnet-nats-template': 'https://github.com/asyncapi/dotnet-nats-template/issues/384',
@@ -50,60 +48,6 @@ function verifyTemplateSupportForV3(template: string) {
     return templatesNotSupportingV3[`${template}`];
   }
   return undefined;
-}
-
-// Direct progress bar implementation that doesn't rely on hooks
-class DirectProgressBar {
-  private bar: SingleBar | null = null;
-  private verbose: boolean;
-  
-  constructor(verbose = false) {
-    this.verbose = verbose;
-  }
-  
-  start(total: number, message: string): void {
-    if (this.bar) {
-      this.bar.stop();
-    }
-    
-    this.bar = new SingleBar({
-      format: `${message} |{bar}| {percentage}% | {value}/{total} | {status}`,
-      barCompleteChar: '\u2588',
-      barIncompleteChar: '\u2591',
-      hideCursor: true,
-      clearOnComplete: false,
-      stopOnComplete: true,
-    }, Presets.shades_classic);
-    
-    this.bar.start(total, 0, { status: 'Starting...' });
-  }
-  
-  update(value: number, status: string): void {
-    if (this.bar) {
-      this.bar.update(value, { status });
-      if (this.verbose) {
-        console.log(`[VERBOSE] ${status}`);
-      }
-    }
-  }
-  
-  stop(message: string): void {
-    if (this.bar) {
-      this.bar.update(this.bar.getTotal(), { status: message });
-      this.bar.stop();
-      console.log(message);
-      this.bar = null;
-    }
-  }
-  
-  fail(message: string): void {
-    if (this.bar) {
-      this.bar.update(this.bar.getTotal(), { status: `❌ ${message}` });
-      this.bar.stop();
-      console.error(red(message));
-      this.bar = null;
-    }
-  }
 }
 
 export default class Template extends Command {
@@ -128,13 +72,10 @@ export default class Template extends Command {
   async run() {
     const { args, flags } = await this.parse(Template); // NOSONAR
     const interactive = !flags['no-interactive'];
-    const verbose = flags.verbose;
-    
     let asyncapi = args['asyncapi'] ?? '';
     let template = args['template'] ?? '';
     let output = flags.output as string;
     const {proxyPort,proxyHost} = flags;
-    
     if (interactive) {
       intro(inverse('AsyncAPI Generator'));
 
@@ -164,46 +105,31 @@ export default class Template extends Command {
       const proxyUrl = `http://${proxyHost}:${proxyPort}`;
       asyncapi = `${asyncapi}+${proxyUrl}`;
     }
+    const asyncapiInput = (await load(asyncapi)) || (await load());
 
-    const progressBar = new DirectProgressBar(verbose);
-    
-    try {
-      progressBar.start(1, 'Loading AsyncAPI document');
-      const asyncapiInput = (await load(asyncapi)) || (await load());
-      progressBar.update(1, 'AsyncAPI document loaded successfully');
-      
-      this.specFile = asyncapiInput;
-      this.metricsMetadata.template = template;
+    this.specFile = asyncapiInput;
+    this.metricsMetadata.template = template;
 
-      const watchTemplate = flags['watch'];
-      const genOption: any = {};
-      if (flags['map-base-url']) {
-        genOption.resolve = { resolve: this.getMapBaseUrlToFolderResolver(parsedFlags.mapBaseUrlToFolder) };
-      }
+    const watchTemplate = flags['watch'];
+    const genOption: any = {};
+    if (flags['map-base-url']) {
+      genOption.resolve = { resolve: this.getMapBaseUrlToFolderResolver(parsedFlags.mapBaseUrlToFolder) };
+    }
 
-      if (asyncapiInput.isAsyncAPI3()) {
-        progressBar.start(1, 'Checking template compatibility with AsyncAPI v3');
-        const v3IssueLink = verifyTemplateSupportForV3(template);
-        if (v3IssueLink !== undefined) {
-          progressBar.fail('Template does not support AsyncAPI v3');
-          this.error(`${template} template does not support AsyncAPI v3 documents, please checkout ${v3IssueLink}`);
-        }
-        progressBar.update(1, 'Template supports AsyncAPI v3');
+    if (asyncapiInput.isAsyncAPI3()) {
+      const v3IssueLink = verifyTemplateSupportForV3(template);
+      if (v3IssueLink !== undefined) {
+        this.error(`${template} template does not support AsyncAPI v3 documents, please checkout ${v3IssueLink}`);
       }
-      
-      if (flags['use-new-generator']) {
-        await this.generateUsingNewGenerator(asyncapi, template, output, options, genOption, progressBar);
-      } else {
-        await this.generate(asyncapi, template, output, options, genOption, interactive, progressBar);
-      }
-      
-      if (watchTemplate) {
-        const watcherHandler = this.watcherHandler(asyncapi, template, output, options, genOption, interactive, progressBar);
-        await this.runWatchMode(asyncapi, template, output, watcherHandler);
-      }
-    } catch (error: any) {
-      progressBar.fail(`Error: ${error.message}`);
-      throw error;
+    }
+    if (flags['use-new-generator']) {
+      await this.generateUsingNewGenerator(asyncapi, template, output, options, genOption);
+    } else {
+      await this.generate(asyncapi, template, output, options, genOption, interactive);
+    }
+    if (watchTemplate) {
+      const watcherHandler = this.watcherHandler(asyncapi, template, output, options, genOption, interactive);
+      await this.runWatchMode(asyncapi, template, output, watcherHandler);
     }
   }
 
@@ -278,7 +204,6 @@ export default class Template extends Command {
       throw new Error('Invalid --registry-url flag. The param requires a valid http/https url.');
     }
   }
-  
   private async registryValidation(registryUrl?: string, registryAuth?: string, registryToken?: string) {
     if (!registryUrl) { return; }
     try {
@@ -290,7 +215,6 @@ export default class Template extends Command {
       this.error(`Can't fetch registryURL: ${registryUrl}`, { exit: 1 });
     }
   }
-  
   private paramParser(inputs?: string[]) {
     if (!inputs) { return {}; }
     const params: Record<string, any> = {};
@@ -338,14 +262,11 @@ export default class Template extends Command {
     return mapBaseURLToFolder;
   }
 
-  private async generate(asyncapi: string | undefined, template: string, output: string, options: any, genOption: any, interactive = true, progressBar: DirectProgressBar) {
+  private async generate(asyncapi: string | undefined, template: string, output: string, options: any, genOption: any, interactive = true) {
     let specification: Specification;
     try {
-      progressBar.start(1, 'Loading specification');
       specification = await load(asyncapi);
-      progressBar.update(1, 'Specification loaded successfully');
     } catch (err: any) {
-      progressBar.fail('Failed to load specification');
       return this.error(
         new ValidationError({
           type: 'invalid-file',
@@ -354,56 +275,23 @@ export default class Template extends Command {
         { exit: 1 },
       );
     }
-    
-    progressBar.start(5, 'Generation in progress');
-    progressBar.update(1, 'Initializing generator...');
-    
     const generator = new AsyncAPIGenerator(template, output || path.resolve(os.tmpdir(), 'asyncapi-generator'), options);
-    
     const s = interactive ? spinner() : { start: () => null, stop: (string: string) => console.log(string) };
     s.start('Generation in progress. Keep calm and wait a bit');
-    
     try {
-      // Force update progress bar at specific intervals to show activity
-      progressBar.update(2, 'Parsing AsyncAPI document...');
-      
-      const generationPromise = generator.generateFromString(specification.text(), { ...genOption, path: asyncapi });
-      
-      // Update progress while generation is happening
-      let step = 3;
-      const interval = setInterval(() => {
-        if (step < 5) {
-          const messages = [
-            'Generating template files...',
-            'Processing templates...',
-            'Writing files to output directory...'
-          ];
-          progressBar.update(step, messages[step - 3]);
-          step++;
-        }
-      }, 2000);
-      
-      await generationPromise;
-      clearInterval(interval);
-      
-      progressBar.update(5, 'Generation completed!');
-      s.stop(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}\n`);
-      progressBar.stop(`Generated files are available at: ${output}`);
+      await generator.generateFromString(specification.text(), { ...genOption, path: asyncapi });
     } catch (err: any) {
       s.stop('Generation failed');
-      progressBar.fail(`Generation failed: ${err.message}`);
       throw new GeneratorError(err);
     }
+    s.stop(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}\n`);
   }
 
-  private async generateUsingNewGenerator(asyncapi: string | undefined, template: string, output: string, options: any, genOption: any, progressBar: DirectProgressBar) {
+  private async generateUsingNewGenerator(asyncapi: string | undefined, template: string, output: string, options: any, genOption: any) {
     let specification: Specification;
     try {
-      progressBar.start(1, 'Loading specification');
       specification = await load(asyncapi);
-      progressBar.update(1, 'Specification loaded successfully');
     } catch (err: any) {
-      progressBar.fail('Failed to load specification');
       return this.error(
         new ValidationError({
           type: 'invalid-file',
@@ -412,41 +300,15 @@ export default class Template extends Command {
         { exit: 1 },
       );
     }
-    
-    progressBar.start(5, 'Generation in progress');
-    progressBar.update(1, 'Initializing new generator...');
-    
     const generator = new AsyncAPINewGenerator(template, output || path.resolve(os.tmpdir(), 'asyncapi-generator'), options);
-    
+    this.log('Generation in progress. Keep calm and wait a bit');
     try {
-      // Force update progress bar at specific intervals to show activity
-      progressBar.update(2, 'Parsing AsyncAPI document...');
-      
-      const generationPromise = generator.generateFromString(specification.text(), { ...genOption, path: asyncapi });
-      
-      // Update progress while generation is happening
-      let step = 3;
-      const interval = setInterval(() => {
-        if (step < 5) {
-          const messages = [
-            'Generating template files...',
-            'Processing templates...',
-            'Writing files to output directory...'
-          ];
-          progressBar.update(step, messages[step - 3]);
-          step++;
-        }
-      }, 2000);
-      
-      await generationPromise;
-      clearInterval(interval);
-      
-      progressBar.update(5, 'Generation completed!');
-      progressBar.stop(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}`);
+      await generator.generateFromString(specification.text(), { ...genOption, path: asyncapi });
     } catch (err: any) {
-      progressBar.fail(`Generation failed: ${err.message}`);
+      this.log('Generation failed');
       throw new GeneratorError(err);
     }
+    this.log(`${yellow('Check out your shiny new generated files at ') + magenta(output) + yellow('.')}\n`);
   }
 
   private async runWatchMode(asyncapi: string | undefined, template: string, output: string, watchHandler: ReturnType<typeof this.watcherHandler>) {
@@ -489,7 +351,7 @@ export default class Template extends Command {
     });
   }
 
-  private watcherHandler(asyncapi: string, template: string, output: string, options: Record<string, any>, genOption: any, interactive: boolean, progressBar: DirectProgressBar): (changedFiles: Record<string, any>) => Promise<void> {
+  private watcherHandler(asyncapi: string, template: string, output: string, options: Record<string, any>, genOption: any, interactive: boolean): (changedFiles: Record<string, any>) => Promise<void> {
     return async (changedFiles: Record<string, any>): Promise<void> => {
       console.clear();
       console.log('[WATCHER] Change detected');
@@ -511,7 +373,7 @@ export default class Template extends Command {
         this.log(`\t${magenta(value.path)} was ${eventText}`);
       }
       try {
-        await this.generate(asyncapi, template, output, options, genOption, interactive, progressBar);
+        await this.generate(asyncapi, template, output, options, genOption, interactive);
       } catch (err: any) {
         throw new GeneratorError(err);
       }
