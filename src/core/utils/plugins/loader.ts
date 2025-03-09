@@ -1,4 +1,3 @@
-// src/plugins/loader.ts
 import { promises as fs } from 'fs';
 import path from 'path';
 import { cosmiconfig } from 'cosmiconfig';
@@ -40,7 +39,6 @@ async function loadPluginsFromDirectory(dir: string): Promise<void> {
       if (entry.isDirectory()) {
         try {
           const pluginPath = path.join(dir, entry.name);
-          // Use dynamic import for ESM compatibility
           const pluginModule = await import(pluginPath);
           
           const plugin = pluginModule.default as AsyncAPIPlugin;
@@ -56,14 +54,12 @@ async function loadPluginsFromDirectory(dir: string): Promise<void> {
       }
     }
   } catch (err) {
-    // Directory might not exist yet
     console.debug(`Plugin directory ${dir} not found or not accessible`);
   }
 }
 
 async function loadNodeModulesPlugins(): Promise<void> {
   try {
-    // Find all installed node modules that match the plugin naming convention
     const nodeModulesPath = path.resolve('node_modules');
     const entries = await fs.readdir(nodeModulesPath, { withFileTypes: true });
     
@@ -91,7 +87,6 @@ async function loadNodeModulesPlugins(): Promise<void> {
 
 async function loadUserConfigPlugins(): Promise<void> {
   try {
-    // Use cosmiconfig to locate user configuration
     const explorer = cosmiconfig('asyncapi');
     const result = await explorer.search();
     
@@ -100,7 +95,6 @@ async function loadUserConfigPlugins(): Promise<void> {
       
       for (const [pluginName, config] of Object.entries(pluginsConfig)) {
         if (config.enabled) {
-          // If it's a path to a local plugin
           if (pluginName.startsWith('./') || pluginName.startsWith('/')) {
             const absolutePath = path.resolve(path.dirname(result.filepath), pluginName);
             try {

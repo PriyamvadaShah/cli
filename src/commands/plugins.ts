@@ -1,4 +1,3 @@
-// src/commands/plugins.ts
 import { Command, Args } from '@oclif/core';
 import chalk from 'chalk';
 import { pluginRegistry } from '../core/utils/plugins/pluginRegistry';

@@ -1,4 +1,3 @@
-// src/plugins/registry.ts
 import { AsyncAPIPlugin, PluginHook } from './types';
 
 export class PluginRegistry {
@@ -12,7 +11,6 @@ export class PluginRegistry {
     
     this.plugins.set(plugin.name, plugin);
     
-    // Register hooks
     for (const [hookName, hookFn] of Object.entries(plugin.hooks || {})) {
       if (!this.extensionPoints.has(hookName)) {
         this.extensionPoints.set(hookName, []);
@@ -38,5 +36,4 @@ export class PluginRegistry {
   }
 }
 
-// Singleton instance
 export const pluginRegistry = new PluginRegistry();
