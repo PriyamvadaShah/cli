@@ -52,9 +52,21 @@ async function renameTar({version, name, sha}) {
 async function renameWindows({version, name, sha, arch}) {
   const dist = 'dist/win32';
 
-  const generatedPath = path.resolve(dist, `${name}-v${version}-${sha}-${arch}.exe`);
+  const sanitizedVersion = version.replace(/[^a-zA-Z0-9.-]/g, '_');
+  const sanitizedSha = sha.replace(/[^a-zA-Z0-9.-]/g, '_');
+
+  const generatedPath = path.resolve(dist, `${name}-v${sanitizedVersion}-${sanitizedSha}-${arch}.exe`);
   const newPath = path.resolve(dist, `asyncapi.${arch}.exe`);
-  await checkAndRenameFile(generatedPath, newPath);
+  
+  try {
+    await checkAndRenameFile(generatedPath, newPath);
+  } catch (error) {
+    console.error(`Failed to rename Windows executable: ${error.message}`);
+  }
+
+  // const generatedPath = path.resolve(dist, `${name}-v${version}-${sha}-${arch}.exe`);
+  // const newPath = path.resolve(dist, `asyncapi.${arch}.exe`);
+  // await checkAndRenameFile(generatedPath, newPath);
 }
 
 async function renamePkg({version, name, sha, arch}) {
